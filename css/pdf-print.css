@@ -1,0 +1,59 @@
+.pdf-print-button {
+    display: inline-block;
+    padding: 12px 24px 12px 48px;
+    background: linear-gradient(145deg, #0085c7, #0073aa);
+    background-size: 200% 200%;
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: 6px;
+    margin: 12px 0;
+    transition: all 0.3s ease, background-position 0.6s ease;
+    box-shadow: 0 2px 4px rgba(0, 115, 170, 0.2);
+    font-weight: 500;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    white-space: normal;
+    word-wrap:normal;
+    max-width: 100%;
+    font-size: clamp(14px, 0.9em, 16px);
+    line-height: 1.4;
+}
+
+.pdf-print-button::before {
+    content: '';
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    opacity: 0.9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' aria-hidden='true' role='img' width='24' height='24' preserveAspectRatio='xMidYMid meet' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 15V3m0 12l-4-4m4 4l4-4M2 17l.621 2.485A2 2 0 0 0 4.561 21h14.878a2 2 0 0 0 1.94-1.515L22 17'%3E%3C/path%3E%3C/svg%3E");
+    background-size: contain;
+    background-repeat: no-repeat;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.pdf-print-button:hover,
+.pdf-print-button:focus {
+    background: linear-gradient(145deg, #0073aa, #005177);
+    background-position: 100% 100%;
+    color: #ffffff;
+    text-decoration: none;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 115, 170, 0.3);
+}
+
+.pdf-print-button:hover::before {
+    transform: translateY(-50%) scale(1.1);
+    opacity: 1;
+}
+
+.pdf-print-button:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0, 115, 170, 0.3), 0 4px 8px rgba(0, 115, 170, 0.3);
+}
+
+.o-sticky-node-0 {
+    word-break: normal !important;
+}
