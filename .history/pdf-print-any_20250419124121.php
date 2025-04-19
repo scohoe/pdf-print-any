@@ -546,59 +546,45 @@ class PDF_Print {
         error_log('PDF Print: Has imported HTML: ' . ($has_imported_html ? 'Yes' : 'No'));
         error_log('PDF Print: Is agenda event: ' . ($is_agenda_event ? 'Yes' : 'No'));
 
-        // First try to get content from print-area for all post types
-        $rendered_content = $this->get_rendered_post_content($post_id);
-        $print_area_content = $this->extract_print_area($rendered_content);
-        
-        error_log('PDF Print: Extracted print-area content length: ' . strlen($print_area_content));
-        
-        // If print-area has sufficient content, use it
-        if (strlen($print_area_content) >= 50) {
-            $html_content = $print_area_content;
-            error_log('PDF Print: Using print-area content');
-        }
-        // Otherwise, use the appropriate method based on post type
-        else if ($is_agenda_event) {
+        if ($is_agenda_event) {
+            // Save the current post ID
+            $original_post_id = get_the_ID();
+            
+            // Set the global post to the correct post
+            global $post;
+            $original_post = $post;
+            $post = get_post($post_id);
+            setup_postdata($post);
+            
+            error_log('PDF Print: Setting global post to ID: ' . $post_id);
+            
+            // Directly call the shortcode function with the correct post ID
+            $html_content = display_agenda_items_shortcode(array('post_id' => $post_id));
+            
             // If there's imported HTML, use that as the primary content
             $imported_html = carbon_get_post_meta($post_id, 'imported_agenda_html');
             if (!empty($imported_html)) {
                 $html_content = $imported_html;
                 error_log('PDF Print: Using imported HTML content, length: ' . strlen($html_content));
-            } 
-            // Otherwise try the shortcode
-            else if (function_exists('display_agenda_items_shortcode')) {
-                // Save the current post ID
-                $original_post_id = get_the_ID();
-                
-                // Set the global post to the correct post
-                global $post;
-                $original_post = $post;
-                $post = get_post($post_id);
-                setup_postdata($post);
-                
-                error_log('PDF Print: Setting global post to ID: ' . $post_id);
-                
-                // Directly call the shortcode function with the correct post ID
-                $html_content = display_agenda_items_shortcode(array('post_id' => $post_id));
-                
-                // Restore the original post
-                $post = $original_post;
-                wp_reset_postdata();
-                
-                error_log('PDF Print: Restored global post to ID: ' . $original_post_id);
-            } else {
-                // Fallback to regular content
-                ob_start();
-                the_content();
-                $html_content = ob_get_clean();
-                error_log('PDF Print: Using regular content as fallback, length: ' . strlen($html_content));
             }
+            
+            // Restore the original post
+            $post = $original_post;
+            wp_reset_postdata();
+            
+            error_log('PDF Print: Restored global post to ID: ' . $original_post_id);
         } else {
             // Regular post handling
             ob_start();
             the_content();
             $html_content = ob_get_clean();
             error_log('PDF Print: Regular post content length: ' . strlen($html_content));
+            
+            // Extract content from print-area
+            $original_length = strlen($html_content);
+            $html_content = $this->extract_print_area($html_content);
+            error_log('PDF Print: Content after print-area extraction, length: ' . strlen($html_content));
+            error_log('PDF Print: Content changed after extraction: ' . ($original_length != strlen($html_content) ? 'Yes' : 'No'));
         }
 
         // Check if we have enough content
@@ -621,26 +607,23 @@ class PDF_Print {
     }
     
     private function get_rendered_post_content($post_id) {
-        error_log('PDF Print: Attempting to get rendered content for post ID: ' . $post_id);
+        // First try using the REST API
+        $response = wp_remote_get(rest_url("wp/v2/posts/{$post_id}?context=edit"));
         
-        // Save current global post
-        global $post;
-        $original_post = $post;
+        if (!is_wp_error($response) && $response['response']['code'] === 200) {
+            $data = json_decode($response['body'], true);
+            if (isset($data['content']['rendered'])) {
+                return $data['content']['rendered'];
+            }
+        }
         
-        // Set up the post data for the requested post
+        // Fallback to direct post content
         $post = get_post($post_id);
         setup_postdata($post);
-        
-        // Try to get the full rendered page content
         ob_start();
         the_content();
         $content = ob_get_clean();
-        
-        // Restore original post
-        $post = $original_post;
         wp_reset_postdata();
-        
-        error_log('PDF Print: Rendered content length: ' . strlen($content));
         
         return $content;
     }
@@ -656,23 +639,11 @@ class PDF_Print {
         
         $xpath = new DOMXPath($dom);
         
-        // Try div with class selector first (most common case)
-        $print_areas = $xpath->query("//div[contains(@class, 'print-area')]");
-        error_log('PDF Print: Found ' . $print_areas->length . ' div elements with class print-area');
-        
-        // If no div with class found, try any element with class
-        if ($print_areas->length === 0) {
-            $print_areas = $xpath->query("//*[contains(@class, 'print-area')]");
-            error_log('PDF Print: Found ' . $print_areas->length . ' elements with class print-area');
-        }
+        // Try class selector first
+        $print_areas = $xpath->query("//*[contains(@class, 'print-area')]");
+        error_log('PDF Print: Found ' . $print_areas->length . ' elements with class print-area');
         
         // If no class found, try ID
-        if ($print_areas->length === 0) {
-            $print_areas = $xpath->query("//div[@id='print-area']");
-            error_log('PDF Print: Found ' . $print_areas->length . ' div elements with ID print-area');
-        }
-        
-        // If no div with ID found, try any element with ID
         if ($print_areas->length === 0) {
             $print_areas = $xpath->query("//*[@id='print-area']");
             error_log('PDF Print: Found ' . $print_areas->length . ' elements with ID print-area');

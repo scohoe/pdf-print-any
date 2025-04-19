@@ -526,8 +526,6 @@ class PDF_Print {
         error_log('PDF Print: Starting PDF generation process');
 
         $post_id = intval($_GET['post_id']);
-        error_log('PDF Print: Processing post ID: ' . $post_id);
-        
         if (!wp_verify_nonce($_GET['nonce'], 'pdf-print-' . $post_id)) {
             error_log('PDF Print: Security check failed');
             wp_die(__('Security check failed', 'pdf-print'));
@@ -538,60 +536,68 @@ class PDF_Print {
         setup_postdata($post);
 
         // Check if this is an agenda event
-        $has_agenda_sections = carbon_get_post_meta($post_id, 'agenda_sections');
-        $has_imported_html = carbon_get_post_meta($post_id, 'imported_agenda_html');
-        $is_agenda_event = $has_agenda_sections || $has_imported_html;
+        $is_agenda_event = carbon_get_post_meta($post_id, 'agenda_sections') || 
+                          carbon_get_post_meta($post_id, 'imported_agenda_html');
         
-        error_log('PDF Print: Has agenda sections: ' . ($has_agenda_sections ? 'Yes' : 'No'));
-        error_log('PDF Print: Has imported HTML: ' . ($has_imported_html ? 'Yes' : 'No'));
         error_log('PDF Print: Is agenda event: ' . ($is_agenda_event ? 'Yes' : 'No'));
+        error_log('PDF Print: Post ID: ' . $post_id);
+        error_log('PDF Print: Post title: ' . get_the_title($post_id));
+        error_log('PDF Print: Post type: ' . get_post_type($post_id));
 
-        // First try to get content from print-area for all post types
-        $rendered_content = $this->get_rendered_post_content($post_id);
-        $print_area_content = $this->extract_print_area($rendered_content);
-        
-        error_log('PDF Print: Extracted print-area content length: ' . strlen($print_area_content));
-        
-        // If print-area has sufficient content, use it
-        if (strlen($print_area_content) >= 50) {
-            $html_content = $print_area_content;
-            error_log('PDF Print: Using print-area content');
-        }
-        // Otherwise, use the appropriate method based on post type
-        else if ($is_agenda_event) {
-            // If there's imported HTML, use that as the primary content
+        $html_content = '';
+
+        if ($is_agenda_event) {
+            // Log agenda sections data for debugging
+            $agenda_sections = carbon_get_post_meta($post_id, 'agenda_sections');
+            if (is_array($agenda_sections)) {
+                error_log('PDF Print: Agenda sections count: ' . count($agenda_sections));
+                // Log first section details if available
+                if (!empty($agenda_sections[0])) {
+                    error_log('PDF Print: First section title: ' . (isset($agenda_sections[0]['title']) ? $agenda_sections[0]['title'] : 'No title'));
+                }
+            } else {
+                error_log('PDF Print: Agenda sections is not an array');
+            }
+            
+            // Try multiple approaches to get content
+            
+            // 1. Try shortcode function if it exists
+            if (function_exists('display_agenda_items_shortcode')) {
+                $html_content = display_agenda_items_shortcode(array());
+                error_log('PDF Print: Using agenda shortcode content, length: ' . strlen($html_content));
+            } else {
+                error_log('PDF Print: display_agenda_items_shortcode function not found');
+            }
+            
+            // 2. If there's imported HTML, use that as the primary content
             $imported_html = carbon_get_post_meta($post_id, 'imported_agenda_html');
             if (!empty($imported_html)) {
                 $html_content = $imported_html;
-                error_log('PDF Print: Using imported HTML content, length: ' . strlen($html_content));
-            } 
-            // Otherwise try the shortcode
-            else if (function_exists('display_agenda_items_shortcode')) {
-                // Save the current post ID
-                $original_post_id = get_the_ID();
-                
-                // Set the global post to the correct post
-                global $post;
-                $original_post = $post;
-                $post = get_post($post_id);
-                setup_postdata($post);
-                
-                error_log('PDF Print: Setting global post to ID: ' . $post_id);
-                
-                // Directly call the shortcode function with the correct post ID
-                $html_content = display_agenda_items_shortcode(array('post_id' => $post_id));
-                
-                // Restore the original post
-                $post = $original_post;
-                wp_reset_postdata();
-                
-                error_log('PDF Print: Restored global post to ID: ' . $original_post_id);
-            } else {
-                // Fallback to regular content
+                error_log('PDF Print: Using imported agenda HTML, length: ' . strlen($html_content));
+            }
+            
+            // 3. Try to get content directly from post content
+            if (strlen($html_content) < 100) {
+                error_log('PDF Print: Agenda content too short, trying post content');
                 ob_start();
                 the_content();
-                $html_content = ob_get_clean();
-                error_log('PDF Print: Using regular content as fallback, length: ' . strlen($html_content));
+                $post_content = ob_get_clean();
+                error_log('PDF Print: Post content length: ' . strlen($post_content));
+                
+                if (strlen($post_content) > strlen($html_content)) {
+                    $html_content = $post_content;
+                }
+            }
+            
+            // 4. Try to get raw post content as last resort
+            if (strlen($html_content) < 100 && !empty($post->post_content)) {
+                error_log('PDF Print: Still insufficient content, trying raw post content');
+                $raw_content = apply_filters('the_content', $post->post_content);
+                error_log('PDF Print: Raw post content length: ' . strlen($raw_content));
+                
+                if (strlen($raw_content) > strlen($html_content)) {
+                    $html_content = $raw_content;
+                }
             }
         } else {
             // Regular post handling
@@ -599,12 +605,28 @@ class PDF_Print {
             the_content();
             $html_content = ob_get_clean();
             error_log('PDF Print: Regular post content length: ' . strlen($html_content));
+            
+            // Extract content from print-area
+            $html_content = $this->extract_print_area($html_content);
+            error_log('PDF Print: Content after print-area extraction, length: ' . strlen($html_content));
         }
 
-        // Check if we have enough content
+        // Check if we have enough content to generate a PDF
         if (strlen($html_content) < 50) {
             error_log('PDF Print: Content too short to generate PDF: "' . substr($html_content, 0, 100) . '"');
-            wp_die('Error generating PDF: Not enough content to generate a PDF. Please check the page content.');
+            
+            // Provide a more helpful error message
+            $error_message = '<h1>Unable to Generate PDF</h1>';
+            $error_message .= '<p>There is not enough content to generate a PDF for this page.</p>';
+            $error_message .= '<p>This could be because:</p>';
+            $error_message .= '<ul>';
+            $error_message .= '<li>The page content is still being edited or is incomplete</li>';
+            $error_message .= '<li>The agenda items have not been properly added</li>';
+            $error_message .= '<li>There might be a technical issue with the content format</li>';
+            $error_message .= '</ul>';
+            $error_message .= '<p><a href="' . get_permalink($post_id) . '">Return to the page</a></p>';
+            
+            wp_die($error_message, 'PDF Generation Error');
         }
 
         wp_reset_postdata();
@@ -621,26 +643,23 @@ class PDF_Print {
     }
     
     private function get_rendered_post_content($post_id) {
-        error_log('PDF Print: Attempting to get rendered content for post ID: ' . $post_id);
+        // First try using the REST API
+        $response = wp_remote_get(rest_url("wp/v2/posts/{$post_id}?context=edit"));
         
-        // Save current global post
-        global $post;
-        $original_post = $post;
+        if (!is_wp_error($response) && $response['response']['code'] === 200) {
+            $data = json_decode($response['body'], true);
+            if (isset($data['content']['rendered'])) {
+                return $data['content']['rendered'];
+            }
+        }
         
-        // Set up the post data for the requested post
+        // Fallback to direct post content
         $post = get_post($post_id);
         setup_postdata($post);
-        
-        // Try to get the full rendered page content
         ob_start();
         the_content();
         $content = ob_get_clean();
-        
-        // Restore original post
-        $post = $original_post;
         wp_reset_postdata();
-        
-        error_log('PDF Print: Rendered content length: ' . strlen($content));
         
         return $content;
     }
@@ -652,27 +671,22 @@ class PDF_Print {
         $dom = new DOMDocument();
         libxml_use_internal_errors(true);
         $dom->loadHTML('<?xml encoding="utf-8" ?>' . $content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $errors = libxml_get_errors();
+        if (!empty($errors)) {
+            error_log('PDF Print: DOM loading errors: ' . count($errors));
+            foreach ($errors as $error) {
+                error_log('PDF Print: DOM error: ' . $error->message);
+            }
+        }
         libxml_clear_errors();
         
         $xpath = new DOMXPath($dom);
         
-        // Try div with class selector first (most common case)
-        $print_areas = $xpath->query("//div[contains(@class, 'print-area')]");
-        error_log('PDF Print: Found ' . $print_areas->length . ' div elements with class print-area');
-        
-        // If no div with class found, try any element with class
-        if ($print_areas->length === 0) {
-            $print_areas = $xpath->query("//*[contains(@class, 'print-area')]");
-            error_log('PDF Print: Found ' . $print_areas->length . ' elements with class print-area');
-        }
+        // Try class selector first
+        $print_areas = $xpath->query("//*[contains(@class, 'print-area')]");
+        error_log('PDF Print: Found ' . $print_areas->length . ' elements with class print-area');
         
         // If no class found, try ID
-        if ($print_areas->length === 0) {
-            $print_areas = $xpath->query("//div[@id='print-area']");
-            error_log('PDF Print: Found ' . $print_areas->length . ' div elements with ID print-area');
-        }
-        
-        // If no div with ID found, try any element with ID
         if ($print_areas->length === 0) {
             $print_areas = $xpath->query("//*[@id='print-area']");
             error_log('PDF Print: Found ' . $print_areas->length . ' elements with ID print-area');
@@ -692,31 +706,6 @@ class PDF_Print {
         }
         
         return $html_content;
-    }
-
-    /**
-     * Generate a minimal agenda template when no content is available
-     */
-    private function generate_minimal_agenda_template($post_id, $title, $date) {
-        // Get any meta data that might be useful
-        $location = get_post_meta($post_id, 'event_location', true) ?: 'TBD';
-        $time = get_post_meta($post_id, 'event_time', true) ?: 'TBD';
-        
-        $template = '
-        <div class="minimal-agenda-template">
-            <h1>' . esc_html($title) . '</h1>
-            <p class="agenda-date"><strong>Date:</strong> ' . esc_html($date) . '</p>
-            <p class="agenda-time"><strong>Time:</strong> ' . esc_html($time) . '</p>
-            <p class="agenda-location"><strong>Location:</strong> ' . esc_html($location) . '</p>
-            
-            <div class="agenda-notice">
-                <h2>Agenda Notice</h2>
-                <p>The detailed agenda for this meeting is currently being prepared and will be available soon.</p>
-                <p>For more information, please contact the meeting organizer.</p>
-            </div>
-        </div>';
-        
-        return $template;
     }
 }
 
